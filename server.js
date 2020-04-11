@@ -4,7 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const pg = require('pg');
 const PORT = process.env.PORT || 4000;
-// const superagent= require('superagent');
+const superagent= require('superagent');
 const app = express();
 
 const client = new pg.Client(process.env.DATABASE_URL);
@@ -14,7 +14,7 @@ app.get('/', (request, response) => {
   response.send('Home Page !');
 });
 
-// app.get('/location', locationHandler);
+app.get('/location', locationHandler);
 app.use('*', notFoundHandler);
 app.use(errorHandler);
 
@@ -53,6 +53,59 @@ app.get('/location',(request,response)=>{
 client.on('error', (err) => {
   throw new Error(err);
 });
+
+
+
+
+
+function locationHandler(request,response){
+  const city = request.query.city;
+  getLocationData(city)
+    .then(data => {render(data,response);})
+    .catch(error =>{ errorHandler(error,request,response);});
+
+}
+
+function getLocationData(city){
+  let SQL = ' SELECT * FROM locations WHERE search_query = $1';
+  let values = [city];
+  return client.query(SQL,values)
+    .then(results =>{
+      if(results.rowCount){return results.rows[0];}
+      else{
+        let key = process.env.GEOCODE_API_KEY;
+        const url = `https://eu1.locationiq.com/v1/search.php?key=${key}&q=${city}&format=json&limit=1`;
+        return superagent.get(url)
+          .then(data => { cacheLocation(city,data.body);});
+      }
+    });
+}
+
+function cacheLocation(city,data){
+  const location = new Location(data[0]);
+  let SQL = `INSERT INTO locations (search_query,formatted_query,lattitude,longitude) VALUES($1,$2,$3,$4) RETURNING *`;
+  let values= [city,location.formatted_query,location.latitude,location.longitude];
+  return client.query(SQL,values)
+    .then(results => results.rows[0]);
+
+}
+
+
+function render (data,response){
+
+  response.status(200).json(data);
+}
+
+function notFoundHandler(request,response){
+  response.status(404).send('Hmmm, not quit my tempo');
+
+}
+
+function errorHandler(error,request,response){
+
+  response.status(500).send(error);
+
+}
 client
   .connect()
   .then(() => {
@@ -63,34 +116,3 @@ client
   .catch((err) => {
     throw new Error(`startup error ${err}`);
   });
-
-
-
-
-// function locationHandler(request, response) {
-//   const city = request.query.city;
-//   superagent(
-//     `https://eu1.locationiq.com/v1/search.php?key=${process.env.GEOCODE_API_KEY}&q=${city}&format=json`
-//   )
-//     .then((res) => {
-//       const geoData = res.body;
-//       const locationData = new Location(city, geoData);
-//       response.status(200).json(locationData);
-//     })
-//     .catch((error) => errorHandler(error, request, response));
-// }
-
-// function Location(city, geoData) {
-//   this.search_query = city;
-//   this.formatted_query = geoData[0].display_name;
-//   this.latitude = geoData[0].lat;
-//   this.longitude = geoData[0].lon;
-// }
-
-function notFoundHandler(request, response) {
-  response.status(404).send('NOT FOUND!');
-}
-
-function errorHandler(error, request, response) {
-  response.status(500).send(error);
-}
